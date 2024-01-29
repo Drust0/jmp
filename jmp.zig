@@ -386,7 +386,7 @@ pub fn main() u8 {
     else
         0;
 
-    const value = std.fmt.allocPrint(allocator, "{d}", .{jump_depth + 1}) catch oom();
+    const value = std.fmt.allocPrint(allocator, "{d}", .{jump_depth +% 1}) catch oom();
     defer allocator.free(value);
 
     env.put("JUMP_DEPTH", value) catch oom();

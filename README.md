@@ -18,10 +18,25 @@ You can quickly add any path to your `jumptable` by running:
 ```
 jmp -a path/to/your/directory/here
 ```
-
 You can remove a path from the table with:
 ```
 jmp -d path/to/remove
+```
+You can query the location of the jumptable with:
+```
+jmp -T
+```
+On Linux the `jumptable` will be looked up on one of the following places:
+```
+$XDG_DATA_HOME/jumptable
+$XDG_CONFIG_HOME/jumptable
+$HOME/.jumptable
+```
+For other operating systems it depends on 
+[this library](https://github.com/ziglibs/known-folders/tree/master)
+In any case, you can always override the default path with:
+```
+jmp -t /path/to/table
 ```
 
 And thats it.
@@ -45,3 +60,11 @@ Aditionally you can see how your pattern measures against your table by running
 ```
 jmp -C patternhere
 ```
+
+## Note
+
+`jmp` jumps into the directory by `execve()`'ing your `$SHELL` in that directory.
+However the previous shell process will still be running, waiting for the new shell to exit.
+This means that once you `jmp` you can `exit` to return to where you started. You
+can query how deeply you have jumped with the `JUMP_DEPTH` environmental variable.
+
