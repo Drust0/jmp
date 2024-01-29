@@ -14,28 +14,6 @@ const cwd = fs.cwd();
 const stdout = std.io.getStdOut().writer();
 const stderr = std.io.getStdErr().writer();
 
-fn getenv(variable: []const u8) ?[]const u8 {
-    for (std.os.environ) |entry| {
-        var splitter = mem.splitSequence(u8, mem.span(entry), "=");
-        if (splitter.next()) |key| {
-            if (mem.eql(u8, key, variable)) return splitter.rest();
-        }
-    }
-    return null;
-}
-
-fn canonicalPath(allocator: Allocator, path: []const u8) []const u8 {
-    return cwd.realpathAlloc(allocator, path) catch |err| {
-        stderr.print("Error resolving the path \"{s}\": {s}\n", .{ path, @errorName(err) }) catch {};
-        proc.exit(253);
-    };
-}
-
-fn oom() noreturn {
-    _ = stderr.write("Out of memory.") catch {};
-    proc.exit(254);
-}
-
 fn flip(n: usize) f64 {
     return @as(f64, 1.0) / @as(f64, @floatFromInt(n));
 }
@@ -134,6 +112,18 @@ test "stringDistance" {
     }
 }
 
+fn canonicalPath(allocator: Allocator, path: []const u8) []const u8 {
+    return cwd.realpathAlloc(allocator, path) catch |err| {
+        stderr.print("Error resolving the path \"{s}\": {s}\n", .{ path, @errorName(err) }) catch {};
+        proc.exit(100);
+    };
+}
+
+fn oom() noreturn {
+    _ = stderr.write("Out of memory.") catch {};
+    proc.exit(255);
+}
+
 pub fn main() u8 {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -145,8 +135,8 @@ pub fn main() u8 {
         \\-T,  --locate-table           Print jumptable path to stdout and exit.
         \\-a,  --add         <PATH>     Add target directory to jumptable.
         \\-d,  --del         <PATH>     Delete target directory from jumptable.
-        \\-v,  --verbose                Output fuzzy string distance calculations.
-        \\-c,  --calculate   <PATTERN>  Print distance between arguments to stdout. 
+        \\-c,  --compare     <PATTERN>  Print distance between arguments to stdout. 
+        \\-C,  --calculations           Output fuzzy string distance calculations.
         \\<PATTERN>                     Change dir to fuzzy matched table entry.
     ;
 
@@ -172,13 +162,25 @@ pub fn main() u8 {
         return 0;
     }
 
+    if (res.args.compare) |leaf| {
+        if (res.positionals.len == 0) {
+            stderr.print("Must provide a second pattern as an arugment.\n", .{}) catch {};
+            return 2;
+        }
+        const pattern = res.positionals[0];
+
+        const dist = stringDistance(allocator, leaf, pattern) catch oom();
+        stdout.print("{d}\n", .{dist}) catch {};
+        return 0;
+    }
+
     const jumptable: File = open_jumptable: {
         const creat = File.CreateFlags{ .read = true, .truncate = false };
 
         if (res.args.jumptable) |path| {
             const file = cwd.createFile(path, creat) catch |err| {
                 stderr.print("Can't access jumptable file \"{s}\" for creation. {s}\n", .{ path, @errorName(err) }) catch {};
-                return 60;
+                return 101;
             };
 
             if (res.args.@"locate-table" != 0) {
@@ -257,13 +259,13 @@ pub fn main() u8 {
 
         stderr.print("No predefined location for jumptable is avaiable on the system.\n" ++
             "Use '-t' or '--jumptable' to provide one.\n", .{}) catch {};
-        return 120;
+        return 50;
     };
     defer jumptable.close();
 
     const data = jumptable.readToEndAlloc(allocator, 1 << 20) catch |err| {
         stderr.print("Error reading jumptable file: {s}.\n", .{@errorName(err)}) catch {};
-        return 10;
+        return 102;
     };
     defer allocator.free(data);
 
@@ -273,7 +275,7 @@ pub fn main() u8 {
 
         jumptable.writer().print("{s}\n", .{canonical_path}) catch |err| {
             stderr.print("Can't write the new path to jumptable. {s}\n", .{@errorName(err)}) catch {};
-            return 13;
+            return 103;
         };
 
         return 0;
@@ -288,12 +290,12 @@ pub fn main() u8 {
 
         jumptable.seekBy(-@as(i64, @intCast(data.len))) catch |err| {
             stderr.print("Can't seek the jumptable. {s}\n", .{@errorName(err)}) catch {};
-            return 101;
+            return 104;
         };
 
         jumptable.setEndPos(0) catch |err| {
             stderr.print("Can't truncate the jumptable. {s}\n", .{@errorName(err)}) catch {};
-            return 102;
+            return 105;
         };
 
         var iter = mem.splitSequence(u8, data, "\n");
@@ -308,7 +310,7 @@ pub fn main() u8 {
             if (!std.mem.eql(u8, canonical_path, line)) {
                 jumptable.writer().print("{s}\n", .{line}) catch |err| {
                     stderr.print("Failed to write to jumptable. {s}\n", .{@errorName(err)}) catch {};
-                    return 14;
+                    return 106;
                 };
             }
         }
@@ -316,18 +318,10 @@ pub fn main() u8 {
         return 0;
     }
 
-    if (res.positionals.len == 0) {
+    const pattern = if (res.positionals.len > 0) res.positionals[0] else {
         stderr.print("Must provide a pattern to jump into.\n", .{}) catch {};
         return 2;
-    }
-
-    const pattern = res.positionals[0];
-
-    if (res.args.calculate) |leaf| {
-        const dist = stringDistance(allocator, leaf, pattern) catch oom();
-        stdout.print("{d}\n", .{dist}) catch {};
-        return 0;
-    }
+    };
 
     const path = fuzzy_match: {
         var iter = mem.splitSequence(u8, data, "\n");
@@ -335,7 +329,7 @@ pub fn main() u8 {
         var min_line: []const u8 = &.{};
         var min_dist: f64 = 99999999999.0;
 
-        if (res.args.verbose != 0)
+        if (res.args.calculations != 0)
             stdout.print("pattern: \"{s}\"\n", .{pattern}) catch {};
 
         while (iter.next()) |line| {
@@ -349,15 +343,20 @@ pub fn main() u8 {
             const leaf = fs.path.basename(line);
             const dist: f64 = stringDistance(allocator, leaf, pattern) catch oom();
 
-            if (res.args.verbose != 0)
-                stdout.print("leaf: \"{s}\" distance: \"{d}\"\n", .{ leaf, dist }) catch {};
+            if (res.args.calculations != 0)
+                stdout.print("leaf: \"{s}\" distance: {d}\n", .{ leaf, dist }) catch {};
 
-            if (dist == 0 and res.args.verbose == 0) break :fuzzy_match line;
+            if (dist == 0 and res.args.calculations == 0) break :fuzzy_match line;
 
             if (dist < min_dist) {
                 min_line = line;
                 min_dist = dist;
             }
+        }
+
+        if (res.args.calculations != 0) {
+            stdout.print("match: \"{s}\"\n", .{min_line}) catch {};
+            return 0;
         }
 
         break :fuzzy_match min_line;
@@ -366,12 +365,12 @@ pub fn main() u8 {
     if (path.len == 0) {
         stderr.print("No match has been found. Your jumptable is empty.\n" ++
             "Add an entry to the table with 'jmp -a <PATH>'\n", .{}) catch {};
-        return 7;
+        return 4;
     }
 
     proc.changeCurDir(path) catch |err| {
         stderr.print("Can't change diretory to \"{s}\". {s}\n", .{ path, @errorName(err) }) catch {};
-        return 23;
+        return 108;
     };
 
     var env = proc.getEnvMap(allocator) catch oom();
@@ -379,7 +378,7 @@ pub fn main() u8 {
 
     const shell = env.get("SHELL") orelse {
         stderr.print("The SHELL environment variable is not set.", .{}) catch {};
-        return 210;
+        return 51;
     };
 
     const jump_depth: u8 = if (env.get("JUMP_DEPTH")) |depth|
@@ -395,5 +394,5 @@ pub fn main() u8 {
     const err = proc.execve(allocator, &.{shell}, &env);
     stderr.print("Can't execute \"{s}\". {s}\n", .{ shell, @errorName(err) }) catch {};
 
-    return 11;
+    return 109;
 }
