@@ -1,8 +1,7 @@
-// TODO: proper error messages
-
 const std = @import("std");
 const mem = std.mem;
 const fs = std.fs;
+const proc = std.process;
 
 const Dir = fs.Dir;
 const File = fs.File;
@@ -27,69 +26,112 @@ fn getenv(variable: []const u8) ?[]const u8 {
 
 fn canonicalPath(allocator: Allocator, path: []const u8) []const u8 {
     return cwd.realpathAlloc(allocator, path) catch |err| {
-        stderr.print(
-            "Error resolving the path \"{s}\": ({s}) {s}\n",
-            .{ path, @errorName(err), switch (err) {
-                error.AccessDenied => "Cant reach path because we have no permissions.",
-                error.NameTooLong => "Path contains a component whose name is too long.",
-                error.NotSupported => "Realpath is not supported on this system.",
-                error.OutOfMemory => oom(),
-                error.Unexpected => wtf(),
-                else => "",
-            } },
-        ) catch {};
-        std.process.exit(253);
+        stderr.print("Error resolving the path \"{s}\": {s}\n", .{ path, @errorName(err) }) catch {};
+        proc.exit(253);
     };
 }
 
 fn oom() noreturn {
     _ = stderr.write("Out of memory.") catch {};
-    std.process.exit(254);
-}
-
-fn wtf() noreturn {
-    _ = stderr.write("Unexpected error has occurred... spooky") catch {};
-    std.process.exit(255);
+    proc.exit(254);
 }
 
 fn flip(n: usize) f64 {
     return @as(f64, 1.0) / @as(f64, @floatFromInt(n));
 }
 
-// TODO: This can be done in O(n) space
 fn stringDistance(allocator: Allocator, strA: []const u8, strB: []const u8) Allocator.Error!f64 {
-    const H = strA.len + 1;
-    const W = strB.len + 1;
 
-    const matrix = try allocator.alloc(f64, W * H);
-    defer allocator.free(matrix);
+    // To minimize memory usage always make the second argument the smallest
+    var sA = strA;
+    var sB = strB;
+    if (sB.len > sA.len) {
+        sA = strB;
+        sB = strA;
+    }
 
-    // matrix[i * W + j] == stringDistance(strA[0..i], strB[0..j])
+    const H = sA.len + 1;
+    const W = sB.len + 1;
 
-    matrix[0] = 0.0;
+    var oldrow = try allocator.alloc(f64, W);
+    var newrow = try allocator.alloc(f64, W);
+    defer {
+        allocator.free(oldrow);
+        allocator.free(newrow);
+    }
+
+    oldrow[0] = 0.0;
 
     var j: usize = 1;
     while (j < W) : (j += 1) {
-        matrix[0 * W + j] = flip(j) + matrix[0 * W + (j - 1)];
+        oldrow[j] = flip(j) + oldrow[j - 1];
     }
 
     var i: usize = 1;
     while (i < H) : (i += 1) {
-        matrix[i * W + 0] = flip(i) + matrix[(i - 1) * W + 0];
+        newrow[0] = flip(i) + oldrow[0];
 
         j = 1;
         while (j < W) : (j += 1) {
-            matrix[i * W + j] = if (strA[i - 1] == strB[j - 1])
-                matrix[(i - 1) * W + (j - 1)]
+            newrow[j] = if (sA[i - 1] == sB[j - 1])
+                oldrow[j - 1]
             else
                 @min(
-                    flip(i) + matrix[(i - 1) * W + j],
-                    flip(j) + matrix[i * W + (j - 1)],
+                    flip(i) + oldrow[j],
+                    flip(j) + newrow[j - 1],
                 );
         }
+
+        const temp = oldrow;
+        oldrow = newrow;
+        newrow = temp;
     }
 
-    return matrix[matrix.len - 1];
+    return oldrow[oldrow.len - 1];
+}
+
+test "stringDistance" {
+    const tst = std.testing;
+
+    const test_samples = .{
+        .{ "Zig", "is", "awesome" },
+        .{ "red", "blue", "green" },
+        .{ "father", "son", "holy spirit" },
+        .{ "bulbasaur", "charmander", "squirtle" },
+        .{ "six", "Seven", "8" },
+        .{ "hlaalu", "redoran", "telvanni" },
+    };
+
+    const dist = stringDistance;
+    const lloc = tst.allocator;
+
+    // Test wether stringDistance is a metric
+    inline for (test_samples) |sample| {
+        inline for (sample) |sv| {
+            // dist(str, str) = 0
+            try tst.expect(try dist(lloc, sv, sv) == 0.0);
+            // dist(str, str[0+1..str.len]) = 1
+            try tst.expect(try dist(lloc, sv, sv[0 + 1 .. sv.len]) == 1.0);
+            // dist(str, str[0..str.len-1]) = 1/(str.len)
+            try tst.expect(try dist(lloc, sv, sv[0 .. sv.len - 1]) == flip(sv.len));
+        }
+
+        // Distance is symmetric
+        try tst.expect(try dist(lloc, sample[0], sample[1]) == try dist(lloc, sample[1], sample[0]));
+        try tst.expect(try dist(lloc, sample[1], sample[2]) == try dist(lloc, sample[2], sample[1]));
+        try tst.expect(try dist(lloc, sample[2], sample[0]) == try dist(lloc, sample[0], sample[2]));
+
+        // Triangular inequality
+        try tst.expect(try dist(lloc, sample[0], sample[1]) +
+            try dist(lloc, sample[1], sample[2]) >=
+            try dist(lloc, sample[0], sample[2]));
+        try tst.expect(try dist(lloc, sample[0], sample[2]) +
+            try dist(lloc, sample[2], sample[1]) >=
+            try dist(lloc, sample[0], sample[1]));
+        try tst.expect(try dist(lloc, sample[1], sample[0]) +
+            try dist(lloc, sample[0], sample[2]) >=
+            try dist(lloc, sample[1], sample[2]));
+    }
 }
 
 pub fn main() u8 {
@@ -107,13 +149,6 @@ pub fn main() u8 {
         \\-c,  --calculate   <PATTERN>  Print distance between arguments to stdout. 
         \\<PATTERN>                     Change dir to fuzzy matched table entry.
     ;
-
-    const shell = getenv("SHELL") orelse {
-        stderr.print("The SHELL environment variable is not set.", .{}) catch {};
-        return 4;
-    };
-
-    const jump_depth: u8 = if (getenv("JUMP_DEPTH")) |depth| (std.fmt.parseInt(u8, depth, 10) catch 0) else 0;
 
     const params = comptime clap.parseParamsComptime(options);
     const parsers = comptime .{
@@ -142,13 +177,7 @@ pub fn main() u8 {
 
         if (res.args.jumptable) |path| {
             const file = cwd.createFile(path, creat) catch |err| {
-                stderr.print(
-                    "Can't access jumptable file \"{s}\" for creation: ({s}) {s}\n",
-                    .{ path, @errorName(err), switch (err) {
-                        error.Unexpected => wtf(),
-                        else => "",
-                    } },
-                ) catch {};
+                stderr.print("Can't access jumptable file \"{s}\" for creation. {s}\n", .{ path, @errorName(err) }) catch {};
                 return 60;
             };
 
@@ -243,10 +272,7 @@ pub fn main() u8 {
         defer allocator.free(canonical_path);
 
         jumptable.writer().print("{s}\n", .{canonical_path}) catch |err| {
-            stderr.print("Can't write the new path to jumptable: {s}\n", .{switch (err) {
-                else => @errorName(err),
-                error.Unexpected => wtf(),
-            }}) catch {};
+            stderr.print("Can't write the new path to jumptable. {s}\n", .{@errorName(err)}) catch {};
             return 13;
         };
 
@@ -254,21 +280,20 @@ pub fn main() u8 {
     }
 
     if (res.args.del) |path| {
+        // TODO: This can be done in less writes, by preserving a initial section
+        // of the file that has not changed
+
         const canonical_path = canonicalPath(allocator, path);
         defer allocator.free(canonical_path);
 
         jumptable.seekBy(-@as(i64, @intCast(data.len))) catch |err| {
-            stderr.print("Can't seek the jumptable: {s}\n", .{switch (err) {
-                else => @errorName(err),
-                error.Unexpected => wtf(),
-            }}) catch {};
+            stderr.print("Can't seek the jumptable. {s}\n", .{@errorName(err)}) catch {};
+            return 101;
         };
 
         jumptable.setEndPos(0) catch |err| {
-            stderr.print("Can't truncate the jumptable: {s}\n", .{switch (err) {
-                else => @errorName(err),
-                error.Unexpected => wtf(),
-            }}) catch {};
+            stderr.print("Can't truncate the jumptable. {s}\n", .{@errorName(err)}) catch {};
+            return 102;
         };
 
         var iter = mem.splitSequence(u8, data, "\n");
@@ -282,10 +307,7 @@ pub fn main() u8 {
 
             if (!std.mem.eql(u8, canonical_path, line)) {
                 jumptable.writer().print("{s}\n", .{line}) catch |err| {
-                    stderr.print("Failed to write to jumptable: {s}\n", .{switch (err) {
-                        else => @errorName(err),
-                        error.Unexpected => wtf(),
-                    }}) catch {};
+                    stderr.print("Failed to write to jumptable. {s}\n", .{@errorName(err)}) catch {};
                     return 14;
                 };
             }
@@ -347,44 +369,31 @@ pub fn main() u8 {
         return 7;
     }
 
-    std.process.changeCurDir(path) catch |err| {
-        stderr.print("Can't change diretory to \"{s}\": {s}\n", .{ path, switch (err) {
-            error.AccessDenied => "No permission to access this directory.",
-            error.FileSystem => "Filesystem error.",
-            error.SymLinkLoop => "Symlink loop detected.",
-            error.NameTooLong => "Directory name is way too long.",
-            error.FileNotFound => "No such file or directory.",
-            error.SystemResources => "Not enough resources on system.",
-            error.NotDir => "File is not a directory.",
-            error.BadPathName => "Invalid path name.",
-            error.InvalidUtf8 => "Pathname is not a valid utf-8 string.",
-            error.Unexpected => wtf(),
-        } }) catch {};
+    proc.changeCurDir(path) catch |err| {
+        stderr.print("Can't change diretory to \"{s}\". {s}\n", .{ path, @errorName(err) }) catch {};
         return 23;
     };
 
-    var new_environ = std.process.getEnvMap(allocator) catch oom();
-    defer new_environ.deinit();
+    var env = proc.getEnvMap(allocator) catch oom();
+    defer env.deinit();
+
+    const shell = env.get("SHELL") orelse {
+        stderr.print("The SHELL environment variable is not set.", .{}) catch {};
+        return 210;
+    };
+
+    const jump_depth: u8 = if (env.get("JUMP_DEPTH")) |depth|
+        std.fmt.parseInt(u8, depth, 10) catch 0
+    else
+        0;
+
     const value = std.fmt.allocPrint(allocator, "{d}", .{jump_depth + 1}) catch oom();
     defer allocator.free(value);
-    new_environ.put("JUMP_DEPTH", value) catch oom();
 
-    const err = std.process.execve(allocator, &.{shell}, &new_environ);
-    stderr.print("Can't execute {s}: {s}\n", .{ shell, switch (err) {
-        error.SystemResources => "Not enough resources on system.",
-        error.AccessDenied => "No permission to execute this.",
-        error.InvalidExe => "Not a valid executable.",
-        error.FileSystem => "Filesystem error.",
-        error.IsDir => "This is a directory, not an executable.",
-        error.FileNotFound => "No such file or directory.",
-        error.NameTooLong => "Executable name is way too long.",
-        error.NotDir => "Path to executable goes through a non-directory.",
-        error.FileBusy => "File is busy.",
-        error.ProcessFdQuotaExceeded => "Fd quota exceeded for process.",
-        error.SystemFdQuotaExceeded => "Fd quota exceeded for system",
-        error.Unexpected => wtf(),
-        error.OutOfMemory => oom(),
-    } }) catch {};
+    env.put("JUMP_DEPTH", value) catch oom();
+
+    const err = proc.execve(allocator, &.{shell}, &env);
+    stderr.print("Can't execute \"{s}\". {s}\n", .{ shell, @errorName(err) }) catch {};
 
     return 11;
 }

@@ -9,7 +9,7 @@ pub fn build(b: *std.Build) void {
 
     const exe = b.addExecutable(.{
         .name = "jmp",
-        .root_source_file = .{ .path = "src/main.zig" },
+        .root_source_file = .{ .path = "jmp.zig" },
         .target = target,
         .optimize = optimize,
     });
