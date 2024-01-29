@@ -17,5 +17,14 @@ pub fn build(b: *std.Build) void {
     exe.root_module.addImport("clap", clap.module("clap"));
     exe.root_module.addImport("knfo", knfo.module("known-folders"));
 
+    const tst = b.addTest(.{
+        .root_source_file = .{ .path = "jmp.zig" },
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const run_test = b.addRunArtifact(tst);
+
+    b.default_step.dependOn(&run_test.step);
     b.installArtifact(exe);
 }

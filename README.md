@@ -22,7 +22,7 @@ You can remove a path from the table with:
 ```
 jmp -d path/to/remove
 ```
-You can query the location of the jumptable with:
+You can query the location of the table with:
 ```
 jmp -T
 ```
@@ -33,7 +33,7 @@ $XDG_CONFIG_HOME/jumptable
 $HOME/.jumptable
 ```
 For other operating systems it depends on 
-[this library](https://github.com/ziglibs/known-folders/tree/master)
+[this library](https://github.com/ziglibs/known-folders/tree/master).
 In any case, you can always override the default path with:
 ```
 jmp -t /path/to/table
@@ -45,8 +45,8 @@ And thats it.
 
 The distance between two strings is the cheapest path, by deleting
 and inserting characters where, deleting a character at
-position `k` costs `1/k`. *(Insertions cost the same as if you deleted
-the character you just inserted.)* This algorithm favors matching
+position `k` costs `1/k`. *Insertions cost the same as if you deleted
+the character you just inserted.* This algorithm favors matching
 prefixes of a string, the distance between `ta` and `table`
 is just `0.78`, but between `ble` and `table` it is `1.50` despite
 having a greater number of character matches.
