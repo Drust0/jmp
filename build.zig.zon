@@ -1,7 +1,7 @@
 .{
-    .name = "vitracker",
-    .version = "0.0.0",
-    .minimum_zig_version = "0.11.0",
+    .name = "jmp",
+    .version = "0.0.1",
+    .minimum_zig_version = "0.12.0-dev.2705",
 
     .dependencies = .{
         .clap = .{
@@ -9,16 +9,10 @@
             .hash = "12209e829da9d7d0bc089e4e0cbc07bb882f6192cd583277277da34df53cd05b8f2a",
         },
         .knfo = .{
-            .url = "git+https://github.com/ziglibs/known-folders.git#806ba01b872820004c7dec3117cb0db66b206af6",
-            .hash = "122094b48dea08e241b48d0ec32e3df6965e814091e3cabaff942e62d053f3ff9b5f",
+            .url = "git+https://github.com/ziglibs/known-folders/#2aa7f2e9855d45b20072e15107fb379b9380adbe",
+            .hash = "12209925016f4b5486a713828ead3bcc900fa4f039c93de1894aa7d5253f7633b92c",
         },
     },
 
-    .paths = .{
-        "build.zig",
-        "build.zig.zon",
-        "src/",
-        "LICENSE",
-        "README.md",
-    },
+    .paths = .{""},
 }
